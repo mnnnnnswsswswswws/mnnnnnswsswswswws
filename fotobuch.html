@@ -1,0 +1,516 @@
+<!DOCTYPE html>
+<html lang="de">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>📸 Fotobuch</title>
+  <script src="https://unpkg.com/react@18/umd/react.production.min.js"></script>
+  <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js"></script>
+  <script src="https://unpkg.com/@babel/standalone/babel.min.js"></script>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <style>
+    [tabindex="-1"]:focus { outline: none; }
+    .masonry { columns: 2; column-gap: 12px; }
+    @media (min-width: 640px)  { .masonry { columns: 3; } }
+    @media (min-width: 1024px) { .masonry { columns: 4; } }
+    .masonry-item { break-inside: avoid; margin-bottom: 12px; }
+  </style>
+</head>
+<body class="bg-stone-50">
+  <div id="root"></div>
+
+  <script type="text/babel">
+    const { useState, useRef, useCallback } = React;
+
+    /* ---- helpers ---- */
+    function uid() {
+      return Math.random().toString(36).slice(2) + Date.now().toString(36);
+    }
+
+    function loadBooks() {
+      try { return JSON.parse(localStorage.getItem('fotobuecher') || '[]'); }
+      catch { return []; }
+    }
+
+    function saveBooks(books) {
+      try {
+        localStorage.setItem('fotobuecher', JSON.stringify(books));
+      } catch (e) {
+        if (e.name === 'QuotaExceededError') {
+          alert('Speicher voll! Lösche einige Fotos oder Bücher um Platz zu machen.');
+        }
+      }
+    }
+
+    async function compressImage(file) {
+      return new Promise(resolve => {
+        const img = new Image();
+        const url = URL.createObjectURL(file);
+        img.onload = () => {
+          const MAX = 1400;
+          let w = img.width, h = img.height;
+          if (w > h && w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+          else if (h > w && h > MAX) { w = Math.round(w * MAX / h); h = MAX; }
+          else if (w > MAX) { h = Math.round(h * MAX / w); w = MAX; }
+          const c = document.createElement('canvas');
+          c.width = w; c.height = h;
+          c.getContext('2d').drawImage(img, 0, 0, w, h);
+          URL.revokeObjectURL(url);
+          resolve(c.toDataURL('image/jpeg', 0.82));
+        };
+        img.onerror = () => { URL.revokeObjectURL(url); resolve(null); };
+        img.src = url;
+      });
+    }
+
+    function esc(s) {
+      return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').replace(/>/g,'&gt;').replace(/"/g,'&quot;');
+    }
+
+    function makeShareHTML(book) {
+      const cards = book.photos.map((p, i) =>
+        `<div class="card" onclick="lb(${i})">`
+        + `<img src="${p.dataUrl}" alt="${esc(p.caption || '')}"/>`
+        + (p.caption ? `<p>${esc(p.caption)}</p>` : '')
+        + `</div>`
+      ).join('');
+
+      const safeData = JSON.stringify(
+        book.photos.map(p => ({ d: p.dataUrl, c: p.caption || '' }))
+      ).replace(/<\//g, '<\\/');
+
+      return `<!DOCTYPE html>
+<html lang="de">
+<head>
+<meta charset="UTF-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>${esc(book.title)}</title>
+<style>
+*{box-sizing:border-box;margin:0;padding:0}
+body{font-family:system-ui,sans-serif;background:#fafaf9;color:#1c1917}
+header{background:#fff;border-bottom:1px solid #e7e5e4;padding:20px 24px}
+.hw{max-width:1100px;margin:0 auto}
+h1{font-size:1.6rem;font-weight:800}
+.sub{color:#78716c;font-size:.85rem;margin-top:4px}
+.badge{display:inline-block;background:#fef3c7;color:#92400e;font-size:.7rem;padding:2px 8px;border-radius:99px;font-weight:600;margin-top:8px}
+.g{max-width:1100px;margin:24px auto;padding:0 16px;columns:2;gap:12px}
+@media(min-width:600px){.g{columns:3}}@media(min-width:900px){.g{columns:4}}
+.card{break-inside:avoid;margin-bottom:12px;background:#fff;border-radius:12px;overflow:hidden;box-shadow:0 1px 3px rgba(0,0,0,.08);cursor:pointer;border:1px solid #e7e5e4}
+.card img{width:100%;display:block;transition:opacity .15s}
+.card:hover img{opacity:.9}
+.card p{padding:8px 12px;font-size:.82rem;color:#78716c;font-style:italic}
+.lb{display:none;position:fixed;inset:0;background:rgba(0,0,0,.96);z-index:99;align-items:center;justify-content:center;flex-direction:column}
+.lb.on{display:flex}
+.lb img{max-width:92vw;max-height:86vh;object-fit:contain;border-radius:8px}
+.lbcap{color:rgba(255,255,255,.7);margin-top:10px;font-style:italic;font-size:.85rem;text-align:center;max-width:60ch}
+.cnt{color:rgba(255,255,255,.3);font-size:.7rem;margin-top:6px}
+.x{position:fixed;top:12px;right:12px;color:rgba(255,255,255,.5);font-size:2rem;cursor:pointer;background:none;border:none;line-height:1;padding:4px}
+.x:hover{color:#fff}
+.nav{position:fixed;top:50%;transform:translateY(-50%);background:none;border:none;color:rgba(255,255,255,.4);font-size:3.5rem;cursor:pointer;padding:0 10px;line-height:1}
+.nav:hover{color:#fff}.nl{left:0}.nr{right:0}
+<\/style>
+<\/head>
+<body>
+<header><div class="hw">
+<h1>${esc(book.title)}<\/h1>
+${book.description ? `<p class="sub">${esc(book.description)}<\/p>` : ''}
+<p class="sub">${book.photos.length} Foto${book.photos.length !== 1 ? 's' : ''} &middot; ${new Date(book.createdAt).toLocaleDateString('de-DE',{day:'2-digit',month:'long',year:'numeric'})}<\/p>
+<span class="badge">📸 Fotobuch<\/span>
+<\/div><\/header>
+<div class="g">${cards}<\/div>
+<div class="lb" id="L"><button class="x" onclick="cl()">&#x2715;<\/button><button class="nav nl" id="pv" onclick="go(-1)">&#x2039;<\/button><img id="li" src="" alt=""><p class="lbcap" id="lc"><\/p><p class="cnt" id="lk"><\/p><button class="nav nr" id="nx" onclick="go(1)">&#x203a;<\/button><\/div>
+<script>
+const D=${safeData};let i=0;
+function lb(n){i=n;up();document.getElementById('L').classList.add('on');document.body.style.overflow='hidden'}
+function cl(){document.getElementById('L').classList.remove('on');document.body.style.overflow=''}
+function go(d){i=Math.max(0,Math.min(D.length-1,i+d));up()}
+function up(){const p=D[i];document.getElementById('li').src=p.d;document.getElementById('lc').textContent=p.c?'„'+p.c+'“':'';document.getElementById('lk').textContent=(i+1)+' / '+D.length;document.getElementById('pv').style.display=i>0?'':'none';document.getElementById('nx').style.display=i<D.length-1?'':'none'}
+document.getElementById('L').onclick=e=>{if(e.target===document.getElementById('L'))cl()};
+document.onkeydown=e=>{if(!document.getElementById('L').classList.contains('on'))return;if(e.key==='Escape')cl();if(e.key==='ArrowLeft')go(-1);if(e.key==='ArrowRight')go(1)};
+<\/script>
+<\/body><\/html>`;
+    }
+
+    /* ---- App root ---- */
+    function App() {
+      const [books, setBooks] = useState(loadBooks);
+      const [currentId, setCurrentId] = useState(null);
+
+      function upd(b) { setBooks(b); saveBooks(b); }
+
+      function createBook(title, desc) {
+        const b = { id: uid(), title: title.trim(), description: (desc || '').trim(), createdAt: new Date().toISOString(), photos: [] };
+        const next = [b, ...books];
+        upd(next);
+        setCurrentId(b.id);
+      }
+
+      function patchBook(id, ch) { upd(books.map(x => x.id === id ? { ...x, ...ch } : x)); }
+      function deleteBook(id) {
+        if (!confirm('Fotobuch wirklich löschen?')) return;
+        upd(books.filter(x => x.id !== id));
+        if (currentId === id) setCurrentId(null);
+      }
+      function addPhotos(id, photos) {
+        upd(books.map(x => x.id === id ? { ...x, photos: [...x.photos, ...photos] } : x));
+      }
+      function patchPhoto(bookId, photoId, ch) {
+        upd(books.map(x => x.id === bookId
+          ? { ...x, photos: x.photos.map(p => p.id === photoId ? { ...p, ...ch } : p) }
+          : x));
+      }
+      function deletePhoto(bookId, photoId) {
+        upd(books.map(x => x.id === bookId ? { ...x, photos: x.photos.filter(p => p.id !== photoId) } : x));
+      }
+
+      const book = books.find(x => x.id === currentId) || null;
+
+      if (book) return (
+        <Editor
+          book={book}
+          onBack={() => setCurrentId(null)}
+          onPatch={ch => patchBook(book.id, ch)}
+          onAddPhotos={photos => addPhotos(book.id, photos)}
+          onPatchPhoto={(pid, ch) => patchPhoto(book.id, pid, ch)}
+          onDelPhoto={pid => deletePhoto(book.id, pid)}
+        />
+      );
+
+      return (
+        <Home
+          books={books}
+          onOpen={id => setCurrentId(id)}
+          onCreate={createBook}
+          onDelete={deleteBook}
+        />
+      );
+    }
+
+    /* ---- Home screen ---- */
+    function Home({ books, onOpen, onCreate, onDelete }) {
+      const [show, setShow] = useState(false);
+      const [title, setTitle] = useState('');
+      const [desc, setDesc] = useState('');
+
+      function submit(e) {
+        e.preventDefault();
+        if (!title.trim()) return;
+        onCreate(title, desc);
+        setTitle(''); setDesc(''); setShow(false);
+      }
+      function close() { setShow(false); setTitle(''); setDesc(''); }
+
+      return (
+        <div className="min-h-screen bg-stone-50">
+          <header className="bg-white border-b border-stone-200">
+            <div className="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+              <span className="text-xl font-bold text-stone-800">📸 Fotobuch</span>
+              <button onClick={() => setShow(true)}
+                className="bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-full transition-colors">
+                + Neues Buch
+              </button>
+            </div>
+          </header>
+
+          <div className="bg-gradient-to-br from-amber-50 via-orange-50 to-rose-50 border-b border-stone-200">
+            <div className="max-w-5xl mx-auto px-4 py-16 text-center">
+              <h1 className="text-4xl sm:text-5xl font-extrabold text-stone-800 mb-3 tracking-tight">
+                Deine Erinnerungen,<br/><span className="text-amber-500">schön geteilt.</span>
+              </h1>
+              <p className="text-stone-500 mb-8 max-w-md mx-auto">
+                Kein Server, kein Login. Einfach im Browser öffnen, Fotos hochladen und als Datei teilen.
+              </p>
+              <button onClick={() => setShow(true)}
+                className="bg-amber-500 hover:bg-amber-600 text-white font-bold px-8 py-3.5 rounded-full text-lg shadow-md hover:shadow-lg transition-all hover:-translate-y-0.5">
+                + Neues Fotobuch erstellen
+              </button>
+            </div>
+          </div>
+
+          <div className="max-w-5xl mx-auto px-4 py-10">
+            {books.length > 0 ? (
+              <>
+                <h2 className="text-lg font-semibold text-stone-600 mb-5">Meine Fotobücher</h2>
+                <div className="grid grid-cols-1 sm:grid-cols-2 md:grid-cols-3 gap-4">
+                  {books.map(b => (
+                    <div key={b.id} className="bg-white rounded-2xl border border-stone-200 shadow-sm overflow-hidden hover:shadow-md transition-all">
+                      <div className="h-32 bg-stone-100 overflow-hidden cursor-pointer" onClick={() => onOpen(b.id)}>
+                        {b.photos.length > 0 ? (
+                          <div className="grid grid-cols-2 h-full gap-px">
+                            {b.photos.slice(0, 4).map(p => (
+                              <img key={p.id} src={p.dataUrl} alt="" className="w-full h-full object-cover" />
+                            ))}
+                          </div>
+                        ) : (
+                          <div className="flex items-center justify-center h-full">
+                            <span className="text-5xl opacity-20">📷</span>
+                          </div>
+                        )}
+                      </div>
+                      <div className="p-4">
+                        <h3 className="font-semibold text-stone-800 truncate cursor-pointer hover:text-amber-600 transition-colors"
+                          onClick={() => onOpen(b.id)}>{b.title}</h3>
+                        <p className="text-xs text-stone-400 mt-0.5">
+                          {b.photos.length} Foto{b.photos.length !== 1 ? 's' : ''} &middot; {new Date(b.createdAt).toLocaleDateString('de-DE')}
+                        </p>
+                        <div className="flex gap-2 mt-3">
+                          <button onClick={() => onOpen(b.id)}
+                            className="flex-1 text-xs bg-amber-50 hover:bg-amber-100 text-amber-700 px-3 py-1.5 rounded-lg font-medium transition-colors">
+                            Öffnen
+                          </button>
+                          <button onClick={() => onDelete(b.id)}
+                            className="text-xs text-stone-300 hover:text-red-400 px-2 py-1.5 rounded-lg transition-colors" title="Löschen">
+                            ✕
+                          </button>
+                        </div>
+                      </div>
+                    </div>
+                  ))}
+                </div>
+              </>
+            ) : (
+              <div className="text-center py-20">
+                <div className="text-7xl mb-5">📷</div>
+                <p className="text-lg text-stone-400 font-medium">Noch keine Fotobücher</p>
+                <p className="text-sm text-stone-300 mt-1">Erstelle dein erstes Fotobuch!</p>
+              </div>
+            )}
+          </div>
+
+          {show && (
+            <div className="fixed inset-0 bg-black/60 backdrop-blur-sm flex items-center justify-center z-50 p-4" onClick={close}>
+              <div className="bg-white rounded-3xl shadow-2xl p-8 w-full max-w-md" onClick={e => e.stopPropagation()}>
+                <h2 className="text-2xl font-bold text-stone-800 mb-6">Neues Fotobuch</h2>
+                <form onSubmit={submit} className="space-y-4">
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1.5">Titel *</label>
+                    <input type="text" value={title} onChange={e => setTitle(e.target.value)}
+                      placeholder="z.B. Sommerurlaub 2024"
+                      className="w-full border border-stone-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent"
+                      required autoFocus />
+                  </div>
+                  <div>
+                    <label className="block text-sm font-medium text-stone-700 mb-1.5">
+                      Beschreibung <span className="font-normal text-stone-400">(optional)</span>
+                    </label>
+                    <textarea value={desc} onChange={e => setDesc(e.target.value)}
+                      placeholder="Eine kurze Beschreibung..." rows={2}
+                      className="w-full border border-stone-300 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-amber-400 focus:border-transparent resize-none" />
+                  </div>
+                  <div className="flex gap-3 pt-1">
+                    <button type="button" onClick={close}
+                      className="flex-1 border border-stone-300 text-stone-600 px-4 py-3 rounded-xl hover:bg-stone-50 font-medium transition-colors">
+                      Abbrechen
+                    </button>
+                    <button type="submit" disabled={!title.trim()}
+                      className="flex-1 bg-amber-500 hover:bg-amber-600 disabled:opacity-50 text-white font-bold px-4 py-3 rounded-xl transition-colors">
+                      Erstellen
+                    </button>
+                  </div>
+                </form>
+              </div>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    /* ---- Editor screen ---- */
+    function Editor({ book, onBack, onPatch, onAddPhotos, onPatchPhoto, onDelPhoto }) {
+      const [drag, setDrag] = useState(false);
+      const [uploading, setUploading] = useState(false);
+      const [editCap, setEditCap] = useState(null);
+      const [capVal, setCapVal] = useState('');
+      const [editTitle, setEditTitle] = useState(false);
+      const [titleVal, setTitleVal] = useState(book.title);
+      const [lb, setLb] = useState(null);
+      const [exported, setExported] = useState(false);
+      const fileRef = useRef(null);
+
+      const lbIdx = lb ? book.photos.findIndex(p => p.id === lb) : -1;
+      const lbPhoto = lbIdx >= 0 ? book.photos[lbIdx] : null;
+
+      const upload = useCallback(async files => {
+        const imgs = Array.from(files).filter(f => f.type.startsWith('image/'));
+        if (!imgs.length) return;
+        setUploading(true);
+        try {
+          const photos = [];
+          for (const f of imgs) {
+            const dataUrl = await compressImage(f);
+            if (dataUrl) photos.push({ id: uid(), filename: f.name, dataUrl, caption: '', uploadedAt: new Date().toISOString() });
+          }
+          if (photos.length) onAddPhotos(photos);
+        } catch { alert('Fehler beim Laden der Fotos.'); }
+        setUploading(false);
+      }, [onAddPhotos]);
+
+      function doExport() {
+        const html = makeShareHTML(book);
+        const a = document.createElement('a');
+        a.href = URL.createObjectURL(new Blob([html], { type: 'text/html' }));
+        a.download = (book.title.replace(/[^\w\säöüß]/gi, '').trim().replace(/\s+/g, '-') || 'fotobuch') + '.html';
+        a.click();
+        URL.revokeObjectURL(a.href);
+        setExported(true);
+        setTimeout(() => setExported(false), 3000);
+      }
+
+      function saveTitle() {
+        if (titleVal.trim()) onPatch({ title: titleVal.trim() });
+        setEditTitle(false);
+      }
+
+      return (
+        <div className="min-h-screen bg-stone-50" tabIndex={-1}
+          onKeyDown={e => {
+            if (!lb) return;
+            if (e.key === 'Escape') setLb(null);
+            if (e.key === 'ArrowLeft' && lbIdx > 0) setLb(book.photos[lbIdx - 1].id);
+            if (e.key === 'ArrowRight' && lbIdx < book.photos.length - 1) setLb(book.photos[lbIdx + 1].id);
+          }}>
+
+          {/* Sticky header */}
+          <header className="bg-white border-b border-stone-200 sticky top-0 z-40 shadow-sm">
+            <div className="max-w-5xl mx-auto px-4 py-3 flex items-center gap-3">
+              <button onClick={onBack} className="text-stone-400 hover:text-stone-700 text-sm shrink-0">&#x2190; Zurück</button>
+              <div className="flex-1 min-w-0">
+                {editTitle ? (
+                  <input value={titleVal} onChange={e => setTitleVal(e.target.value)}
+                    className="font-bold text-lg text-stone-800 border-b-2 border-amber-400 bg-transparent focus:outline-none w-full"
+                    onBlur={saveTitle}
+                    onKeyDown={e => { if (e.key === 'Enter') saveTitle(); if (e.key === 'Escape') setEditTitle(false); }}
+                    autoFocus />
+                ) : (
+                  <button onClick={() => { setEditTitle(true); setTitleVal(book.title); }}
+                    className="font-bold text-lg text-stone-800 hover:text-amber-600 flex items-center gap-1.5 group w-full text-left truncate">
+                    <span className="truncate">{book.title}</span>
+                    <span className="text-stone-300 group-hover:text-amber-400 text-sm shrink-0">✏️</span>
+                  </button>
+                )}
+              </div>
+              <span className="text-xs bg-green-100 text-green-700 px-2.5 py-1 rounded-full font-medium shrink-0">✓ Gespeichert</span>
+              <button onClick={doExport}
+                className="bg-amber-500 hover:bg-amber-600 text-white text-sm font-semibold px-4 py-2 rounded-full transition-all shrink-0 shadow-sm">
+                {exported ? '✓ Exportiert!' : '↓ Teilen'}
+              </button>
+            </div>
+          </header>
+
+          <div className="max-w-5xl mx-auto px-4 py-8">
+            {/* Upload zone */}
+            <div
+              onDragOver={e => { e.preventDefault(); setDrag(true); }}
+              onDragLeave={e => { if (!e.currentTarget.contains(e.relatedTarget)) setDrag(false); }}
+              onDrop={e => { e.preventDefault(); setDrag(false); upload(e.dataTransfer.files); }}
+              onClick={() => fileRef.current?.click()}
+              className={`border-2 border-dashed rounded-2xl p-12 text-center cursor-pointer transition-all mb-8 ${
+                drag ? 'border-amber-400 bg-amber-50 scale-[1.01]' : 'border-stone-300 hover:border-amber-400 hover:bg-amber-50/50'
+              }`}>
+              <input ref={fileRef} type="file" multiple accept="image/*" className="hidden"
+                onChange={e => { upload(e.target.files); e.target.value = ''; }} />
+              {uploading ? (
+                <div><div className="text-4xl mb-2">⏳</div><p className="font-medium text-stone-500">Fotos werden verarbeitet…</p></div>
+              ) : (
+                <div>
+                  <div className="text-4xl mb-2">📤</div>
+                  <p className="font-medium text-stone-600">Fotos hier ablegen oder klicken</p>
+                  <p className="text-sm text-stone-400 mt-1">JPG, PNG, GIF, WEBP – mehrere gleichzeitig möglich</p>
+                </div>
+              )}
+            </div>
+
+            {/* Photo grid */}
+            {book.photos.length > 0 ? (
+              <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-4 gap-3">
+                {book.photos.map(p => (
+                  <div key={p.id} className="group relative bg-white rounded-xl overflow-hidden shadow-sm border border-stone-200 hover:shadow-md transition-all">
+                    <div className="aspect-square overflow-hidden bg-stone-100 cursor-zoom-in" onClick={() => setLb(p.id)}>
+                      <img src={p.dataUrl} alt={p.caption}
+                        className="w-full h-full object-cover group-hover:scale-105 transition-transform duration-300" />
+                    </div>
+                    <button
+                      onClick={() => { if (confirm('Foto löschen?')) onDelPhoto(p.id); }}
+                      className="absolute top-2 right-2 bg-red-500 text-white w-7 h-7 rounded-full text-xs flex items-center justify-center opacity-0 group-hover:opacity-100 transition-opacity shadow">
+                      ✕
+                    </button>
+                    <div className="p-2">
+                      {editCap === p.id ? (
+                        <div className="flex gap-1">
+                          <input value={capVal} onChange={e => setCapVal(e.target.value)}
+                            className="flex-1 text-xs border border-stone-300 rounded-lg px-2 py-1.5 focus:outline-none focus:ring-1 focus:ring-amber-400"
+                            placeholder="Beschriftung…"
+                            onKeyDown={e => {
+                              if (e.key === 'Enter') { onPatchPhoto(p.id, { caption: capVal }); setEditCap(null); }
+                              if (e.key === 'Escape') setEditCap(null);
+                            }}
+                            autoFocus />
+                          <button onClick={() => { onPatchPhoto(p.id, { caption: capVal }); setEditCap(null); }}
+                            className="bg-amber-500 hover:bg-amber-600 text-white text-xs px-2 py-1.5 rounded-lg">✓</button>
+                        </div>
+                      ) : (
+                        <button onClick={() => { setEditCap(p.id); setCapVal(p.caption); }}
+                          className="w-full text-left text-xs">
+                          {p.caption
+                            ? <span className="text-stone-500 italic">„{p.caption}“</span>
+                            : <span className="text-stone-300 hover:text-amber-400">+ Beschriftung</span>}
+                        </button>
+                      )}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="text-center py-16">
+                <div className="text-5xl mb-3">🖼️</div>
+                <p className="text-stone-400">Noch keine Fotos – lade dein erstes Foto hoch!</p>
+              </div>
+            )}
+
+            {/* Share section */}
+            {book.photos.length > 0 && (
+              <div className="mt-12 bg-gradient-to-br from-amber-50 to-orange-50 rounded-2xl p-7 border border-amber-100">
+                <h3 className="font-semibold text-stone-800 mb-1">📤 Fotobuch teilen</h3>
+                <p className="text-sm text-stone-500 mb-4">
+                  Exportiere als HTML-Datei und teile sie per WhatsApp, E-Mail, USB oder Cloud.
+                  Der Empfänger öffnet die Datei einfach im Browser – ohne App, ohne Login.
+                </p>
+                <button onClick={doExport}
+                  className="bg-amber-500 hover:bg-amber-600 text-white font-semibold px-6 py-2.5 rounded-xl text-sm transition-colors">
+                  {exported ? '✓ Datei heruntergeladen!' : '↓ Als HTML-Datei exportieren'}
+                </button>
+              </div>
+            )}
+          </div>
+
+          {/* Lightbox */}
+          {lbPhoto && (
+            <div className="fixed inset-0 bg-black/95 flex flex-col items-center justify-center z-50"
+              onClick={() => setLb(null)}>
+              <button className="absolute top-4 right-4 text-white/50 hover:text-white text-3xl leading-none w-10 h-10 flex items-center justify-center"
+                onClick={() => setLb(null)}>✕</button>
+              {lbIdx > 0 && (
+                <button className="absolute left-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white text-5xl leading-none px-2"
+                  onClick={e => { e.stopPropagation(); setLb(book.photos[lbIdx - 1].id); }}>‹</button>
+              )}
+              {lbIdx < book.photos.length - 1 && (
+                <button className="absolute right-3 top-1/2 -translate-y-1/2 text-white/50 hover:text-white text-5xl leading-none px-2"
+                  onClick={e => { e.stopPropagation(); setLb(book.photos[lbIdx + 1].id); }}>›</button>
+              )}
+              <img src={lbPhoto.dataUrl} alt={lbPhoto.caption}
+                className="max-h-[86vh] max-w-[92vw] object-contain rounded-lg"
+                onClick={e => e.stopPropagation()} />
+              {lbPhoto.caption && (
+                <p className="text-white/70 mt-3 italic text-sm text-center max-w-lg">„{lbPhoto.caption}“</p>
+              )}
+              <p className="text-white/30 text-xs mt-2">{lbIdx + 1} / {book.photos.length}</p>
+            </div>
+          )}
+        </div>
+      );
+    }
+
+    ReactDOM.createRoot(document.getElementById('root')).render(<App />);
+  </script>
+</body>
+</html>
