@@ -1,0 +1,27 @@
+{
+  "name": "Fotobuch",
+  "short_name": "Fotobuch",
+  "description": "Erstelle und teile schöne Fotobücher – direkt im Browser",
+  "start_url": ".",
+  "scope": ".",
+  "display": "standalone",
+  "background_color": "#fafaf9",
+  "theme_color": "#f59e0b",
+  "orientation": "any",
+  "lang": "de",
+  "categories": ["photo", "utilities"],
+  "icons": [
+    {
+      "src": "icon.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "any"
+    },
+    {
+      "src": "icon-maskable.svg",
+      "sizes": "any",
+      "type": "image/svg+xml",
+      "purpose": "maskable"
+    }
+  ]
+}
